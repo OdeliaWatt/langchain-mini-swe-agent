@@ -33,9 +33,9 @@ jobs:
     outputs:
       codspeed: ${{ steps.set-matrix.outputs.codspeed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Install change analysis dependencies
@@ -59,7 +59,7 @@ jobs:
       matrix:
         codspeed: ${{ fromJSON(needs.build.outputs.codspeed) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Python and uv
         uses: ./.github/actions/uv_setup
         with:
