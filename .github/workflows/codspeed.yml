@@ -1,0 +1,78 @@
+# CodSpeed performance benchmarks.
+#
+# Runs benchmarks on changed packages and uploads results to CodSpeed.
+# Separated from the main CI workflow so that push-to-master baseline runs
+# are never cancelled by subsequent merges (cancel-in-progress is only
+# enabled for pull_request events).
+
+name: "⚡ CodSpeed"
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# On PRs, cancel stale runs when new commits are pushed.
+# On push-to-master, never cancel — these runs populate CodSpeed baselines.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  UV_FROZEN: "true"
+  UV_NO_SYNC: "true"
+
+
+jobs:
+  build:
+    if: ${{ github.repository_owner == 'OdeliaWatt' && !contains(github.event.pull_request.labels.*.name, 'codspeed-ignore') }}
+    runs-on: ubuntu-latest
+    outputs:
+      codspeed: ${{ steps.set-matrix.outputs.codspeed }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install change analysis dependencies
+        run: python -m pip install packaging requests
+      - name: Get changed files
+        id: changed-files
+        uses: Ana06/get-changed-files@v2.3.0
+        with:
+          format: json
+      - name: Determine changed packages
+        id: set-matrix
+        run: |
+          python .github/scripts/check_diff.py "${{ steps.changed-files.outputs.all }}" >> "$GITHUB_OUTPUT"
+
+  benchmarks:
+    needs: build
+    if: ${{ needs.build.result == 'success' && needs.build.outputs.codspeed != '[]' }}
+    runs-on: codspeed-macro
+    strategy:
+      fail-fast: false
+      matrix:
+        codspeed: ${{ fromJSON(needs.build.outputs.codspeed) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python and uv
+        uses: ./.github/actions/uv_setup
+        with:
+          python-version: ${{ matrix.codspeed.python-version }}
+          working-directory: ${{ matrix.codspeed.working-directory }}
+      - name: Install test dependencies
+        working-directory: ${{ matrix.codspeed.working-directory }}
+        run: uv sync --group test
+      - name: Run CodSpeed benchmarks
+        working-directory: ${{ matrix.codspeed.working-directory }}
+        env:
+          CODSPEED_TOKEN: ${{ secrets.CODSPEED_TOKEN }}
+        run: |
+          uv run --group test pytest tests/benchmarks \
+            --codspeed \
+            --codspeed-mode=${{ matrix.codspeed.codspeed-mode }}
