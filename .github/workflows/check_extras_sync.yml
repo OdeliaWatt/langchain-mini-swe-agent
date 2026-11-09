@@ -1,0 +1,93 @@
+# See `.github/scripts/check_extras_sync.py` for the rationale.
+
+name: "🔍 Check Extras Sync"
+
+on:
+  pull_request:
+    paths:
+      - "libs/**/pyproject.toml"
+      - ".github/scripts/check_extras_sync.py"
+      - ".github/workflows/check_extras_sync.yml"
+  push:
+    branches: [master]
+    paths:
+      - "libs/**/pyproject.toml"
+      - ".github/scripts/check_extras_sync.py"
+      - ".github/workflows/check_extras_sync.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+
+jobs:
+  check-extras-sync:
+    if: github.repository_owner == 'OdeliaWatt'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python and uv
+        uses: ./.github/actions/uv_setup
+        with:
+          python-version: "3.12"
+
+      - name: Check extras sync
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          mapfile -t pyprojects < <(
+            find . \
+              -type d \( \
+                -name .git -o \
+                -name '.venv*' -o \
+                -name 'venv*' -o \
+                -name virtualenv -o \
+                -name env -o \
+                -name ENV -o \
+                -name 'env.bak' -o \
+                -name node_modules -o \
+                -name build -o \
+                -name dist -o \
+                -name sdist -o \
+                -name wheels -o \
+                -name '*.egg-info' -o \
+                -name .eggs -o \
+                -name .tox -o \
+                -name .nox -o \
+                -name __pypackages__ \
+              \) -prune -o \
+              -type f -name pyproject.toml -print | sort
+          )
+
+          if [ "${#pyprojects[@]}" -eq 0 ]; then
+            echo "::error::No package configuration files (pyproject.toml) were found."
+            exit 1
+          fi
+
+          echo "Discovered ${#pyprojects[@]} package configuration file(s)."
+
+          failed_files=()
+          for pyproject in "${pyprojects[@]}"; do
+            echo "::group::Checking ${pyproject}"
+            if python .github/scripts/check_extras_sync.py "${pyproject}"; then
+              echo "PASS: ${pyproject}"
+            else
+              echo "::error file=${pyproject}::Extras sync check failed for ${pyproject}"
+              failed_files+=("${pyproject}")
+            fi
+            echo "::endgroup::"
+          done
+
+          if [ "${#failed_files[@]}" -ne 0 ]; then
+            echo "::error::Extras sync check failed for ${#failed_files[@]} package configuration file(s):"
+            printf '  - %s\n' "${failed_files[@]}"
+            exit 1
+          fi
+
+          echo "All discovered package extras are in sync with required dependencies."
